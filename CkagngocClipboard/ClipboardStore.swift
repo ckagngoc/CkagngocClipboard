@@ -1,8 +1,10 @@
 import AppKit
 import Carbon.HIToolbox
 import Combine
+import CryptoKit
 import Foundation
 import os
+import Security
 import UniformTypeIdentifiers
 
 struct ClipboardEntry: Codable, Identifiable, Equatable {
@@ -160,6 +162,7 @@ final class ClipboardStore: ObservableObject {
     private let shortcutKey = "clipboardShortcut"
     private let maximumEntryCount = 100
     private var lastChangeCount: Int
+    private var canPersistHistory: Bool
 
     init(
         defaults: UserDefaults = .standard,
@@ -174,11 +177,13 @@ final class ClipboardStore: ObservableObject {
         ).first?
             .appendingPathComponent("CkagngocClipboard", isDirectory: true)
             .appendingPathComponent("history.plist")
-        self.entries = Self.loadEntries(
+        let loadedHistory = Self.loadEntries(
             from: defaults,
             key: "clipboardHistory",
             fileURL: historyFileURL
         )
+        self.entries = loadedHistory.entries
+        self.canPersistHistory = loadedHistory.canPersist
         self.shortcut = Self.loadShortcut(from: defaults, key: "clipboardShortcut")
         self.lastChangeCount = NSPasteboard.general.changeCount
 
@@ -191,9 +196,7 @@ final class ClipboardStore: ObservableObject {
         } catch {
             shortcutError = error.localizedDescription
         }
-        if defaults.data(forKey: historyKey) != nil,
-           let historyFileURL,
-           !FileManager.default.fileExists(atPath: historyFileURL.path) {
+        if loadedHistory.needsEncryption {
             persistEntries()
         }
         captureCurrentPasteboard()
@@ -331,6 +334,7 @@ final class ClipboardStore: ObservableObject {
 
     private func persistEntries() {
         do {
+            guard canPersistHistory else { return }
             guard let historyFileURL else {
                 throw ClipboardPersistenceError.applicationSupportUnavailable
             }
@@ -340,7 +344,8 @@ final class ClipboardStore: ObservableObject {
             )
             let encoder = PropertyListEncoder()
             encoder.outputFormat = .binary
-            try encoder.encode(entries).write(to: historyFileURL, options: .atomic)
+            let data = try ClipboardHistoryEncryption.encrypt(encoder.encode(entries))
+            try data.write(to: historyFileURL, options: .atomic)
             defaults.removeObject(forKey: historyKey)
         } catch {
             logger.error("Unable to save clipboard history: \(error.localizedDescription, privacy: .public)")
@@ -351,7 +356,7 @@ final class ClipboardStore: ObservableObject {
         from defaults: UserDefaults,
         key: String,
         fileURL: URL?
-    ) -> [ClipboardEntry] {
+    ) -> (entries: [ClipboardEntry], needsEncryption: Bool, canPersist: Bool) {
         let data: Data?
         let isLegacyDefaultsData: Bool
         if let fileURL, FileManager.default.fileExists(atPath: fileURL.path) {
@@ -365,29 +370,33 @@ final class ClipboardStore: ObservableObject {
                 ).error("Unable to read clipboard history file: \(error.localizedDescription, privacy: .public)")
                 data = nil
                 isLegacyDefaultsData = false
+                return ([], false, false)
             }
         } else {
             data = defaults.data(forKey: key)
             isLegacyDefaultsData = true
         }
-        guard let data else { return [] }
+        guard let data else { return ([], false, true) }
         do {
+            let isEncrypted = ClipboardHistoryEncryption.isEncrypted(data)
+            let decodedData = isEncrypted ? try ClipboardHistoryEncryption.decrypt(data) : data
             let entries: [ClipboardEntry]
             if isLegacyDefaultsData {
-                entries = try JSONDecoder().decode([ClipboardEntry].self, from: data)
+                entries = try JSONDecoder().decode([ClipboardEntry].self, from: decodedData)
             } else {
-                entries = try PropertyListDecoder().decode([ClipboardEntry].self, from: data)
+                entries = try PropertyListDecoder().decode([ClipboardEntry].self, from: decodedData)
             }
-            return entries.sorted {
+            let sortedEntries = entries.sorted {
                 if $0.isPinned != $1.isPinned { return $0.isPinned }
                 return $0.createdAt > $1.createdAt
             }
+            return (sortedEntries, !isEncrypted, true)
         } catch {
             Logger(
                 subsystem: Bundle.main.bundleIdentifier ?? "CkagngocClipboard",
                 category: "ClipboardHistory"
             ).error("Unable to read clipboard history: \(error.localizedDescription, privacy: .public)")
-            return []
+            return ([], false, false)
         }
     }
 
@@ -407,9 +416,85 @@ final class ClipboardStore: ObservableObject {
 
 private enum ClipboardPersistenceError: LocalizedError {
     case applicationSupportUnavailable
+    case encryptionFailed
+    case keychainFailure(OSStatus)
 
     var errorDescription: String? {
-        "The application support directory is unavailable."
+        switch self {
+        case .applicationSupportUnavailable:
+            "The application support directory is unavailable."
+        case .encryptionFailed:
+            "Clipboard history could not be encrypted."
+        case .keychainFailure(let status):
+            "The clipboard encryption key could not be accessed (error \(status))."
+        }
+    }
+}
+
+enum ClipboardHistoryEncryption {
+    private static let marker = Data("CKGCH1".utf8)
+    private static let keychainService =
+        "\(Bundle.main.bundleIdentifier ?? "CkagngocClipboard").clipboard-history"
+    private static let keychainAccount = "encryption-key"
+
+    static func isEncrypted(_ data: Data) -> Bool {
+        data.starts(with: marker)
+    }
+
+    static func encrypt(_ data: Data) throws -> Data {
+        try encrypt(data, using: encryptionKey())
+    }
+
+    static func encrypt(_ data: Data, using key: SymmetricKey) throws -> Data {
+        let sealedBox = try AES.GCM.seal(data, using: key)
+        guard let combined = sealedBox.combined else {
+            throw ClipboardPersistenceError.encryptionFailed
+        }
+        return marker + combined
+    }
+
+    static func decrypt(_ data: Data) throws -> Data {
+        try decrypt(data, using: encryptionKey())
+    }
+
+    static func decrypt(_ data: Data, using key: SymmetricKey) throws -> Data {
+        guard isEncrypted(data) else { return data }
+        let combined = Data(data.dropFirst(marker.count))
+        let sealedBox = try AES.GCM.SealedBox(combined: combined)
+        return try AES.GCM.open(sealedBox, using: key)
+    }
+
+    private static func encryptionKey() throws -> SymmetricKey {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService,
+            kSecAttrAccount as String: keychainAccount,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        if status == errSecSuccess, let keyData = result as? Data {
+            return SymmetricKey(data: keyData)
+        }
+        guard status == errSecItemNotFound else {
+            throw ClipboardPersistenceError.keychainFailure(status)
+        }
+
+        let key = SymmetricKey(size: .bits256)
+        let keyData = key.withUnsafeBytes { Data($0) }
+        var addQuery = query
+        addQuery.removeValue(forKey: kSecReturnData as String)
+        addQuery.removeValue(forKey: kSecMatchLimit as String)
+        addQuery[kSecValueData as String] = keyData
+        let addStatus = SecItemAdd(addQuery as CFDictionary, nil)
+        if addStatus == errSecDuplicateItem {
+            return try encryptionKey()
+        }
+        guard addStatus == errSecSuccess else {
+            throw ClipboardPersistenceError.keychainFailure(addStatus)
+        }
+        return key
     }
 }
 

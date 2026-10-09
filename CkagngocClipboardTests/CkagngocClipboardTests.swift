@@ -1,5 +1,6 @@
 import AppKit
 import Carbon.HIToolbox
+import CryptoKit
 import Testing
 @testable import CkagngocClipboard
 
@@ -116,6 +117,28 @@ struct CkagngocClipboardTests {
 
         #expect(ClipboardHistory.adding(image, to: [image], limit: 10) == [image])
         #expect(ClipboardHistory.adding(files, to: [files], limit: 10) == [files])
+    }
+
+    @Test func clipboardHistoryEncryptionHidesAndRestoresData() throws {
+        let key = SymmetricKey(size: .bits256)
+        let plaintext = Data("sensitive clipboard contents".utf8)
+
+        let encrypted = try ClipboardHistoryEncryption.encrypt(plaintext, using: key)
+        let decrypted = try ClipboardHistoryEncryption.decrypt(encrypted, using: key)
+
+        #expect(ClipboardHistoryEncryption.isEncrypted(encrypted))
+        #expect(!encrypted.contains(plaintext))
+        #expect(decrypted == plaintext)
+    }
+
+    @Test func clipboardHistoryEncryptionRejectsTamperedData() throws {
+        let key = SymmetricKey(size: .bits256)
+        var encrypted = try ClipboardHistoryEncryption.encrypt(Data("clipboard".utf8), using: key)
+        encrypted[encrypted.count - 1] ^= 1
+
+        #expect(throws: (any Error).self) {
+            try ClipboardHistoryEncryption.decrypt(encrypted, using: key)
+        }
     }
 
     @MainActor

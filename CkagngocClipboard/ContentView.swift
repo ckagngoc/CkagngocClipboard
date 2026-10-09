@@ -392,7 +392,7 @@ private struct SettingsView: View {
             VStack(alignment: .leading, spacing: 8) {
                 Label("Quyền riêng tư", systemImage: "lock.shield")
                     .font(.system(size: 13, weight: .semibold))
-                Text("Lịch sử văn bản được lưu cục bộ trên máy Mac này, tối đa 100 mục. Bạn có thể xóa bất cứ lúc nào.")
+                Text("Lịch sử văn bản, hình ảnh và tệp được mã hóa, lưu cục bộ trên máy Mac này (tối đa 100 mục). Bạn có thể xóa bất cứ lúc nào.")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

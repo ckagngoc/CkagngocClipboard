@@ -10,6 +10,7 @@ Ckagngoc Clipboard là ứng dụng thanh menu dành cho macOS, giúp lưu lại
 - Ghim mục quan trọng, sao chép lại hoặc xóa từng mục.
 - Mở cửa sổ clipboard bằng phím tắt toàn cục `⌃⌥V` mặc định; có thể đổi phím tắt trong phần cài đặt.
 - Xóa toàn bộ lịch sử hoặc thoát ứng dụng từ giao diện.
+- Mã hóa lịch sử đã lưu bằng AES-GCM; khóa mã hóa được giữ trong Keychain của macOS.
 - Lưu lịch sử trên máy Mac, không gửi dữ liệu clipboard đến máy chủ.
 
 ## Yêu cầu
@@ -40,10 +41,10 @@ Trong cửa sổ ứng dụng, bạn có thể tìm kiếm, chuyển giữa **G�
 
 ## Lưu trữ và quyền riêng tư
 
-Lịch sử được lưu cục bộ tại:
+Lịch sử được mã hóa và lưu cục bộ tại:
 
 ```text
 ~/Library/Application Support/CkagngocClipboard/history.plist
 ```
 
-Ứng dụng không tải lịch sử clipboard lên mạng. Nội dung clipboard có thể chứa thông tin nhạy cảm; hãy ghim hoặc xóa mục theo nhu cầu và dùng **Xóa lịch sử** khi muốn xóa toàn bộ dữ liệu đã lưu.
+Khóa giải mã được lưu trong Keychain của macOS. Ứng dụng không tải lịch sử clipboard lên mạng. Nội dung clipboard có thể chứa thông tin nhạy cảm; hãy ghim hoặc xóa mục theo nhu cầu và dùng **Xóa lịch sử** khi muốn xóa toàn bộ dữ liệu đã lưu.
