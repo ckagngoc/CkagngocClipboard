@@ -85,7 +85,7 @@ struct ContentView: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text("Ckagngoc Clipboard")
                     .font(.system(size: 17, weight: .bold))
-                Text("Lịch sử văn bản đã sao chép")
+                Text("Văn bản, hình ảnh và tệp đã sao chép")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
             }
@@ -183,7 +183,7 @@ struct ContentView: View {
                  : "Không tìm thấy kết quả")
                 .font(.system(size: 14, weight: .semibold))
             Text(searchText.isEmpty
-                 ? "Văn bản bạn sao chép sẽ xuất hiện ở đây."
+                 ? "Văn bản, hình ảnh và tệp bạn sao chép sẽ xuất hiện ở đây."
                  : "Thử tìm bằng từ khóa khác.")
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
@@ -233,24 +233,45 @@ private struct ClipboardRow: View {
     var body: some View {
         HStack(spacing: 12) {
             Button(action: onCopy) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(entry.text)
-                        .font(.system(size: 13))
-                        .foregroundStyle(.primary)
-                        .lineLimit(3)
-                        .multilineTextAlignment(.leading)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-
-                    HStack(spacing: 5) {
-                        if entry.isPinned {
-                            Image(systemName: "pin.fill")
-                                .foregroundStyle(Color.accentColor)
-                        }
-                        Text(entry.createdAt, style: .relative)
-                            .foregroundStyle(.secondary)
+                HStack(spacing: 12) {
+                    if entry.isImage, let data = entry.imageData, let image = NSImage(data: data) {
+                        Image(nsImage: image)
+                            .resizable()
+                            .scaledToFill()
+                            .frame(width: 52, height: 52)
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                    } else {
+                        Image(systemName: entry.isFile ? "doc.on.doc" : "text.alignleft")
+                            .font(.system(size: 17, weight: .medium))
+                            .foregroundStyle(Color.accentColor)
+                            .frame(width: 42, height: 42)
+                            .background(Color.accentColor.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
                     }
-                    .font(.system(size: 10, weight: .medium))
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(entry.text)
+                            .font(.system(size: 13))
+                            .foregroundStyle(.primary)
+                            .lineLimit(3)
+                            .multilineTextAlignment(.leading)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        HStack(spacing: 5) {
+                            if entry.isPinned {
+                                Image(systemName: "pin.fill")
+                                    .foregroundStyle(Color.accentColor)
+                            }
+                            Text(entry.isImage ? "Hình ảnh" : (entry.isFile ? "Tệp" : "Văn bản"))
+                                .foregroundStyle(.secondary)
+                            Text("·")
+                                .foregroundStyle(.tertiary)
+                            Text(entry.createdAt, style: .relative)
+                                .foregroundStyle(.secondary)
+                        }
+                        .font(.system(size: 10, weight: .medium))
+                    }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)

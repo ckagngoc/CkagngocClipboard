@@ -3,18 +3,69 @@ import Carbon.HIToolbox
 import Combine
 import Foundation
 import os
+import UniformTypeIdentifiers
 
 struct ClipboardEntry: Codable, Identifiable, Equatable {
     var id: UUID
     var text: String
     var createdAt: Date
     var isPinned: Bool
+    var imageData: Data?
+    var imagePasteboardType: String?
+    var fileURLs: [URL]?
 
     init(id: UUID = UUID(), text: String, createdAt: Date = .now, isPinned: Bool = false) {
         self.id = id
         self.text = text
         self.createdAt = createdAt
         self.isPinned = isPinned
+        self.imageData = nil
+        self.imagePasteboardType = nil
+        self.fileURLs = nil
+    }
+
+    init(
+        id: UUID = UUID(),
+        imageData: Data,
+        pasteboardType: String,
+        createdAt: Date = .now,
+        isPinned: Bool = false
+    ) {
+        self.id = id
+        self.text = "Hình ảnh"
+        self.createdAt = createdAt
+        self.isPinned = isPinned
+        self.imageData = imageData
+        self.imagePasteboardType = pasteboardType
+        self.fileURLs = nil
+    }
+
+    init(id: UUID = UUID(), fileURLs: [URL], createdAt: Date = .now, isPinned: Bool = false) {
+        self.id = id
+        self.text = fileURLs.map(\.lastPathComponent).joined(separator: ", ")
+        self.createdAt = createdAt
+        self.isPinned = isPinned
+        self.imageData = nil
+        self.imagePasteboardType = nil
+        self.fileURLs = fileURLs
+    }
+
+    var isImage: Bool {
+        imageData != nil
+    }
+
+    var isFile: Bool {
+        !(fileURLs?.isEmpty ?? true)
+    }
+
+    func hasSameContent(as other: ClipboardEntry) -> Bool {
+        if let imageData, let otherImageData = other.imageData {
+            return imageData == otherImageData && imagePasteboardType == other.imagePasteboardType
+        }
+        if let fileURLs, let otherFileURLs = other.fileURLs {
+            return fileURLs == otherFileURLs
+        }
+        return !isImage && !other.isImage && !isFile && !other.isFile && text == other.text
     }
 }
 
@@ -50,21 +101,29 @@ struct Shortcut: Codable, Equatable {
 
 enum ClipboardHistory {
     static func adding(
-        _ text: String,
+        _ entry: ClipboardEntry,
         to entries: [ClipboardEntry],
         limit: Int,
         date: Date = .now
     ) -> [ClipboardEntry]? {
-        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
-        guard entries.first?.text != text else { return entries }
+        guard entry.isImage || entry.isFile
+                || !entry.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            return nil
+        }
+        if let latest = entries.first, latest.hasSameContent(as: entry) {
+            return entries
+        }
 
         var updatedEntries = entries
-        if let existingIndex = updatedEntries.firstIndex(where: { $0.text == text }) {
+        if let existingIndex = updatedEntries.firstIndex(where: { $0.hasSameContent(as: entry) }) {
             var existing = updatedEntries.remove(at: existingIndex)
             existing.createdAt = date
             updatedEntries.insert(existing, at: 0)
         } else {
-            updatedEntries.insert(ClipboardEntry(text: text, createdAt: date), at: 0)
+            var newEntry = entry
+            newEntry.createdAt = date
+            updatedEntries.insert(newEntry, at: 0)
         }
 
         updatedEntries.sort {
@@ -91,6 +150,7 @@ final class ClipboardStore: ObservableObject {
 
     private let defaults: UserDefaults
     private let hotKey: GlobalHotKey
+    private let historyFileURL: URL?
     private let logger = Logger(
         subsystem: Bundle.main.bundleIdentifier ?? "CkagngocClipboard",
         category: "ClipboardHistory"
@@ -108,7 +168,17 @@ final class ClipboardStore: ObservableObject {
         self.defaults = defaults
         let hotKey = hotKey ?? GlobalHotKey()
         self.hotKey = hotKey
-        self.entries = Self.loadEntries(from: defaults, key: "clipboardHistory")
+        self.historyFileURL = FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        ).first?
+            .appendingPathComponent("CkagngocClipboard", isDirectory: true)
+            .appendingPathComponent("history.plist")
+        self.entries = Self.loadEntries(
+            from: defaults,
+            key: "clipboardHistory",
+            fileURL: historyFileURL
+        )
         self.shortcut = Self.loadShortcut(from: defaults, key: "clipboardShortcut")
         self.lastChangeCount = NSPasteboard.general.changeCount
 
@@ -121,9 +191,12 @@ final class ClipboardStore: ObservableObject {
         } catch {
             shortcutError = error.localizedDescription
         }
-        if let currentText = NSPasteboard.general.string(forType: .string) {
-            capture(currentText)
+        if defaults.data(forKey: historyKey) != nil,
+           let historyFileURL,
+           !FileManager.default.fileExists(atPath: historyFileURL.path) {
+            persistEntries()
         }
+        captureCurrentPasteboard()
         startMonitoring()
     }
 
@@ -132,8 +205,12 @@ final class ClipboardStore: ObservableObject {
     }
 
     func capture(_ text: String) {
+        capture(ClipboardEntry(text: text))
+    }
+
+    func capture(_ entry: ClipboardEntry) {
         guard let updatedEntries = ClipboardHistory.adding(
-            text,
+            entry,
             to: entries,
             limit: maximumEntryCount
         ), updatedEntries != entries else { return }
@@ -143,8 +220,10 @@ final class ClipboardStore: ObservableObject {
 
     func copy(_ entry: ClipboardEntry) {
         let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(entry.text, forType: .string)
+        guard Self.write(entry, to: pasteboard) else {
+            logger.error("Unable to restore clipboard entry \(entry.id.uuidString, privacy: .public)")
+            return
+        }
         lastChangeCount = pasteboard.changeCount
     }
 
@@ -193,8 +272,51 @@ final class ClipboardStore: ObservableObject {
         let pasteboard = NSPasteboard.general
         guard pasteboard.changeCount != lastChangeCount else { return }
         lastChangeCount = pasteboard.changeCount
-        guard let text = pasteboard.string(forType: .string) else { return }
-        capture(text)
+        captureCurrentPasteboard()
+    }
+
+    private func captureCurrentPasteboard() {
+        guard let entry = Self.entry(from: NSPasteboard.general) else { return }
+        capture(entry)
+    }
+
+    static func entry(from pasteboard: NSPasteboard) -> ClipboardEntry? {
+        if let fileURLs = Self.fileURLs(from: pasteboard), !fileURLs.isEmpty {
+            return ClipboardEntry(fileURLs: fileURLs)
+        }
+        if let image = Self.image(from: pasteboard) {
+            return image
+        }
+        guard let text = pasteboard.string(forType: .string) else { return nil }
+        return ClipboardEntry(text: text)
+    }
+
+    @discardableResult
+    static func write(_ entry: ClipboardEntry, to pasteboard: NSPasteboard) -> Bool {
+        pasteboard.clearContents()
+        if let imageData = entry.imageData, let type = entry.imagePasteboardType {
+            return pasteboard.setData(imageData, forType: NSPasteboard.PasteboardType(type))
+        }
+        if let fileURLs = entry.fileURLs, !fileURLs.isEmpty {
+            return pasteboard.writeObjects(fileURLs.map { $0 as NSURL })
+        }
+        return pasteboard.setString(entry.text, forType: .string)
+    }
+
+    private static func fileURLs(from pasteboard: NSPasteboard) -> [URL]? {
+        let objects = pasteboard.readObjects(
+            forClasses: [NSURL.self],
+            options: [.urlReadingFileURLsOnly: true]
+        ) as? [NSURL]
+        return objects?.map { $0 as URL }.filter(\.isFileURL)
+    }
+
+    private static func image(from pasteboard: NSPasteboard) -> ClipboardEntry? {
+        for type in pasteboard.types ?? [] where UTType(type.rawValue)?.conforms(to: .image) == true {
+            guard let data = pasteboard.data(forType: type) else { continue }
+            return ClipboardEntry(imageData: data, pasteboardType: type.rawValue)
+        }
+        return nil
     }
 
     private func registerShortcut() throws {
@@ -209,16 +331,53 @@ final class ClipboardStore: ObservableObject {
 
     private func persistEntries() {
         do {
-            defaults.set(try JSONEncoder().encode(entries), forKey: historyKey)
+            guard let historyFileURL else {
+                throw ClipboardPersistenceError.applicationSupportUnavailable
+            }
+            try FileManager.default.createDirectory(
+                at: historyFileURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            let encoder = PropertyListEncoder()
+            encoder.outputFormat = .binary
+            try encoder.encode(entries).write(to: historyFileURL, options: .atomic)
+            defaults.removeObject(forKey: historyKey)
         } catch {
             logger.error("Unable to save clipboard history: \(error.localizedDescription, privacy: .public)")
         }
     }
 
-    private static func loadEntries(from defaults: UserDefaults, key: String) -> [ClipboardEntry] {
-        guard let data = defaults.data(forKey: key) else { return [] }
+    private static func loadEntries(
+        from defaults: UserDefaults,
+        key: String,
+        fileURL: URL?
+    ) -> [ClipboardEntry] {
+        let data: Data?
+        let isLegacyDefaultsData: Bool
+        if let fileURL, FileManager.default.fileExists(atPath: fileURL.path) {
+            do {
+                data = try Data(contentsOf: fileURL)
+                isLegacyDefaultsData = false
+            } catch {
+                Logger(
+                    subsystem: Bundle.main.bundleIdentifier ?? "CkagngocClipboard",
+                    category: "ClipboardHistory"
+                ).error("Unable to read clipboard history file: \(error.localizedDescription, privacy: .public)")
+                data = nil
+                isLegacyDefaultsData = false
+            }
+        } else {
+            data = defaults.data(forKey: key)
+            isLegacyDefaultsData = true
+        }
+        guard let data else { return [] }
         do {
-            let entries = try JSONDecoder().decode([ClipboardEntry].self, from: data)
+            let entries: [ClipboardEntry]
+            if isLegacyDefaultsData {
+                entries = try JSONDecoder().decode([ClipboardEntry].self, from: data)
+            } else {
+                entries = try PropertyListDecoder().decode([ClipboardEntry].self, from: data)
+            }
             return entries.sorted {
                 if $0.isPinned != $1.isPinned { return $0.isPinned }
                 return $0.createdAt > $1.createdAt
@@ -243,6 +402,14 @@ final class ClipboardStore: ObservableObject {
             ).error("Unable to read clipboard shortcut: \(error.localizedDescription, privacy: .public)")
             return .defaultValue
         }
+    }
+}
+
+private enum ClipboardPersistenceError: LocalizedError {
+    case applicationSupportUnavailable
+
+    var errorDescription: String? {
+        "The application support directory is unavailable."
     }
 }
 

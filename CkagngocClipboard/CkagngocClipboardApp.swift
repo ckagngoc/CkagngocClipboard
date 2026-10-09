@@ -26,13 +26,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
         store = ClipboardStore()
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        statusItem?.button?.image = NSImage(
+        guard let button = statusItem?.button else { return }
+        button.image = NSImage(
             systemSymbolName: "document.on.clipboard",
             accessibilityDescription: "Ckagngoc Clipboard"
         )
-        statusItem?.button?.action = #selector(togglePopover)
-        statusItem?.button?.target = self
-        statusItem?.button?.toolTip = "Ckagngoc Clipboard"
+        button.action = #selector(statusItemClicked(_:))
+        button.target = self
+        button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+        button.toolTip = "Ckagngoc Clipboard — nhấn chuột phải để thoát"
 
         popover.behavior = .transient
         popover.delegate = self
@@ -64,6 +66,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             NSApp.activate(ignoringOtherApps: true)
         }
+    }
+
+    @objc private func statusItemClicked(_ sender: NSStatusBarButton) {
+        if NSApp.currentEvent?.type == .rightMouseUp {
+            let menu = NSMenu()
+            menu.addItem(
+                withTitle: "Mở Ckagngoc Clipboard",
+                action: #selector(togglePopover),
+                keyEquivalent: ""
+            ).target = self
+            menu.addItem(.separator())
+            menu.addItem(
+                withTitle: "Thoát Ckagngoc Clipboard",
+                action: #selector(quitApplication),
+                keyEquivalent: "q"
+            ).target = self
+            menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.maxY), in: sender)
+        } else {
+            togglePopover()
+        }
+    }
+
+    @objc private func quitApplication() {
+        NSApp.terminate(nil)
     }
 
     func popoverDidShow(_ notification: Notification) {
