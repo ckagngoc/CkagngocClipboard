@@ -28,11 +28,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         statusItem?.button?.image = NSImage(
             systemSymbolName: "document.on.clipboard",
-            accessibilityDescription: "Clipboard"
+            accessibilityDescription: "Ckagngoc Clipboard"
         )
         statusItem?.button?.action = #selector(togglePopover)
         statusItem?.button?.target = self
-        statusItem?.button?.toolTip = "Clipboard"
+        statusItem?.button?.toolTip = "Ckagngoc Clipboard"
 
         popover.behavior = .transient
         popover.delegate = self

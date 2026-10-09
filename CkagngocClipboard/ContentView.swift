@@ -66,7 +66,7 @@ struct ContentView: View {
             Text("Thao tác này không thể hoàn tác.")
         }
         .confirmationDialog(
-            "Thoát Clipboard?",
+            "Thoát Ckagngoc Clipboard?",
             isPresented: $showingQuitConfirmation,
             titleVisibility: .visible
         ) {
@@ -76,14 +76,14 @@ struct ContentView: View {
 
     private var header: some View {
         HStack(spacing: 12) {
-            Image(systemName: "document.on.clipboard.fill")
-                .font(.system(size: 23, weight: .semibold))
-                .foregroundStyle(Color.accentColor)
+            Image("CkagngocLogo")
+                .resizable()
+                .scaledToFill()
                 .frame(width: 42, height: 42)
-                .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 13))
+                .clipShape(RoundedRectangle(cornerRadius: 13))
 
             VStack(alignment: .leading, spacing: 3) {
-                Text("Clipboard")
+                Text("Ckagngoc Clipboard")
                     .font(.system(size: 17, weight: .bold))
                 Text("Lịch sử văn bản đã sao chép")
                     .font(.system(size: 12))
@@ -213,7 +213,7 @@ struct ContentView: View {
             }
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
-            .help("Thoát Clipboard")
+            .help("Thoát Ckagngoc Clipboard")
         }
         .font(.system(size: 11, weight: .medium))
         .padding(.horizontal, 16)
@@ -314,7 +314,7 @@ private struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Cài đặt")
                         .font(.system(size: 20, weight: .bold))
-                    Text("Tùy chỉnh cách Clipboard hoạt động.")
+                    Text("Tùy chỉnh cách Ckagngoc Clipboard hoạt động.")
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                 }
@@ -332,7 +332,7 @@ private struct SettingsView: View {
             }
 
             VStack(alignment: .leading, spacing: 12) {
-                Label("Phím tắt mở Clipboard", systemImage: "keyboard")
+                Label("Phím tắt mở Ckagngoc Clipboard", systemImage: "keyboard")
                     .font(.system(size: 13, weight: .semibold))
 
                 Button {
